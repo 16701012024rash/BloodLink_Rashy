@@ -1,186 +1,131 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { 
-  Bell, 
-  AlertTriangle, 
-  Droplet, 
-  CheckCircle2, 
-  Calendar, 
-  Trash2, 
-  CheckCheck,
-  ArrowRight
+import { Link, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Bell, AlertTriangle, Droplet, CheckCircle2, Calendar, Trash2,
+  CheckCheck, ArrowRight, Info, Heart, Shield, Clock, X, Filter
 } from 'lucide-react';
 import { useNotification } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
+import { EmptyState } from '../components/ui/index.jsx';
+
+const typeConfig = {
+  emergency: { icon: AlertTriangle, bg: 'bg-blood-50', border: 'border-blood-200', iconCls: 'text-blood-700', badge: 'badge-danger' },
+  match:     { icon: Droplet,       bg: 'bg-blue-50',  border: 'border-blue-200',  iconCls: 'text-blue-700',  badge: 'badge-navy' },
+  update:    { icon: Info,          bg: 'bg-surface-50', border: 'border-surface-200', iconCls: 'text-surface-500', badge: 'badge-neutral' },
+  reminder:  { icon: Calendar,      bg: 'bg-warning-50', border: 'border-warning-200', iconCls: 'text-warning-600', badge: 'badge-warning' },
+  success:   { icon: CheckCircle2,  bg: 'bg-success-50', border: 'border-success-200', iconCls: 'text-success-600', badge: 'badge-success' },
+};
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  if (typeof ts === 'string' && !ts.includes('T')) return ts;
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60)  return 'Just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
 
 export const NotificationsPage = () => {
   const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification } = useNotification();
-  const [filter, setFilter] = useState('all'); // all, unread, emergency
+  const { currentUser } = useAuth();
+  const [filter, setFilter] = useState('all');
 
-  const filteredNotifs = notifications.filter(n => {
-    if (filter === 'unread') return !n.read;
+  const filtered = notifications.filter(n => {
+    if (filter === 'unread')    return !n.read && !n.is_read;
     if (filter === 'emergency') return n.type === 'emergency' || n.urgent;
     return true;
   });
 
+  const filters = [
+    { id: 'all',       label: `All (${notifications.length})` },
+    { id: 'unread',    label: `Unread (${unreadCount})` },
+    { id: 'emergency', label: '🚨 Emergency' },
+  ];
+
   return (
-    <div className="min-h-screen bg-surface-50 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-surface-200">
-          <div>
-            <div className="inline-flex items-center space-x-1.5 bg-blood-50 text-blood-800 text-[11px] font-bold px-3 py-1 rounded-full mb-1">
-              <Bell className="w-3.5 h-3.5" />
-              <span>Real-Time Notifications</span>
+    <div className="min-h-screen bg-surface-50">
+      <div className="bg-white border-b border-surface-200">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 badge badge-blood mb-2">
+                <Bell className="w-3.5 h-3.5" />Real-Time Notifications
+              </div>
+              <h1 className="text-2xl font-bold text-surface-900">Notification Center</h1>
+              <p className="text-sm text-surface-500 mt-0.5">Emergency alerts, donor responses, and appointment updates.</p>
             </div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-              Notification Center
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Stay alerted on matching emergency cases, donor responses, and donation eligibility.
-            </p>
+            {unreadCount > 0 && (
+              <button onClick={() => markAllAsRead(currentUser?.id)}
+                className="btn btn-md btn-secondary self-start sm:self-auto">
+                <CheckCheck className="w-4 h-4 text-blood-700" />Mark All Read
+              </button>
+            )}
           </div>
 
-          {unreadCount > 0 && (
-            <button
-              onClick={markAllAsRead}
-              className="inline-flex items-center space-x-1.5 bg-white border border-surface-300 hover:bg-surface-100 text-slate-700 px-4 py-2 rounded-full text-xs font-bold transition shadow-xs self-start sm:self-auto"
-            >
-              <CheckCheck className="w-4 h-4 text-blood-800" />
-              <span>Mark All as Read</span>
-            </button>
-          )}
+          {/* Filter tabs */}
+          <div className="flex gap-2 mt-5 flex-wrap">
+            {filters.map(f => (
+              <button key={f.id} onClick={() => setFilter(f.id)}
+                className={`btn btn-sm transition-all ${filter === f.id ? 'btn-primary' : 'btn-secondary'}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
 
-        {/* Filter Pills */}
-        <div className="flex space-x-2">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition ${
-              filter === 'all'
-                ? 'bg-blood-800 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-surface-100'
-            }`}
-          >
-            All Notifications ({notifications.length})
-          </button>
-          <button
-            onClick={() => setFilter('unread')}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition ${
-              filter === 'unread'
-                ? 'bg-blood-800 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-surface-100'
-            }`}
-          >
-            Unread ({unreadCount})
-          </button>
-          <button
-            onClick={() => setFilter('emergency')}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition ${
-              filter === 'emergency'
-                ? 'bg-blood-800 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-surface-100'
-            }`}
-          >
-            🚨 Emergency Alerts
-          </button>
-        </div>
-
-        {/* Notification Cards List */}
-        <div className="space-y-3">
-          {filteredNotifs.length > 0 ? (
-            filteredNotifs.map(n => {
-              const isEmergency = n.type === 'emergency' || n.urgent;
-              const isMatch = n.type === 'match';
-
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-2">
+        <AnimatePresence mode="popLayout">
+          {filtered.length === 0 ? (
+            <EmptyState icon={Bell} title="No notifications here"
+              description={filter === 'unread' ? 'You\'re all caught up! No unread notifications.' : 'Notifications will appear here as platform activity occurs.'} />
+          ) : (
+            filtered.map(n => {
+              const isUnread = !n.read && !n.is_read;
+              const cfg = typeConfig[n.type] || typeConfig.update;
+              const Icon = cfg.icon;
               return (
-                <div
-                  key={n.id}
+                <motion.div key={n.id} layout
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 24, scale: 0.98 }}
                   onClick={() => markAsRead(n.id)}
-                  className={`p-5 rounded-3xl border transition-all duration-200 flex items-start justify-between gap-4 cursor-pointer ${
-                    !n.read
-                      ? 'bg-white border-blood-200 shadow-md ring-1 ring-blood-100'
-                      : 'bg-white/80 border-surface-200 shadow-xs'
-                  }`}
+                  className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-all ${
+                    isUnread ? `${cfg.bg} ${cfg.border}` : 'bg-white border-surface-100 opacity-80'
+                  } hover:shadow-card`}
                 >
-                  <div className="flex items-start space-x-4">
-                    {/* Icon container */}
-                    <div
-                      className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
-                        isEmergency
-                          ? 'bg-red-100 text-red-600 animate-pulse'
-                          : isMatch
-                          ? 'bg-blood-100 text-blood-800'
-                          : 'bg-emerald-50 text-emerald-600'
-                      }`}
-                    >
-                      {isEmergency ? (
-                        <AlertTriangle className="w-5 h-5" />
-                      ) : isMatch ? (
-                        <Droplet className="w-5 h-5 fill-current" />
-                      ) : (
-                        <CheckCircle2 className="w-5 h-5" />
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h4 className={`text-sm font-bold ${!n.read ? 'text-slate-900' : 'text-slate-700'}`}>
-                          {n.title}
-                        </h4>
-                        {!n.read && (
-                          <span className="w-2 h-2 rounded-full bg-blood-600" />
-                        )}
+                  <div className={`w-10 h-10 rounded-xl ${isUnread ? 'bg-white/70' : 'bg-surface-100'} flex items-center justify-center flex-shrink-0`}>
+                    <Icon className={`w-5 h-5 ${isUnread ? cfg.iconCls : 'text-surface-400'}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className={`text-sm font-semibold ${isUnread ? 'text-surface-900' : 'text-surface-600'}`}>{n.title}</p>
+                        <p className="text-sm text-surface-500 mt-0.5 leading-snug">{n.message}</p>
                       </div>
-
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed max-w-xl">
-                        {n.message}
-                      </p>
-
-                      <div className="flex items-center space-x-3 mt-2 text-[10px] text-slate-400">
-                        <span>{n.timestamp}</span>
-                        {n.actionUrl && (
-                          <>
-                            <span>•</span>
-                            <Link
-                              to={n.actionUrl}
-                              className="text-blood-800 font-bold hover:underline flex items-center space-x-0.5"
-                            >
-                              <span>View Details</span>
-                              <ArrowRight className="w-2.5 h-2.5" />
-                            </Link>
-                          </>
-                        )}
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {isUnread && <span className="w-2 h-2 rounded-full bg-blood-600 flex-shrink-0 mt-1" />}
+                        <button onClick={e => { e.stopPropagation(); deleteNotification(n.id); }}
+                          className="p-1 rounded hover:bg-surface-200 text-surface-300 hover:text-surface-600 transition opacity-0 group-hover:opacity-100">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
+                    <div className="flex items-center gap-3 mt-2">
+                      <span className="text-xs text-surface-400">{timeAgo(n.created_at || n.timestamp)}</span>
+                      {(n.urgent || n.type === 'emergency') && <span className="badge badge-danger text-[10px]">Emergency</span>}
+                    </div>
                   </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center space-x-1 shrink-0">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteNotification(n.id);
-                      }}
-                      className="p-2 text-slate-400 hover:text-red-600 rounded-full hover:bg-red-50 transition"
-                      title="Delete notification"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                </motion.div>
               );
             })
-          ) : (
-            <div className="bg-white rounded-3xl p-12 text-center border border-surface-200">
-              <Bell className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-              <h3 className="font-bold text-slate-800 text-base">No notifications</h3>
-              <p className="text-xs text-slate-400 mt-1">You are all caught up on alerts and updates.</p>
-            </div>
           )}
-        </div>
-
+        </AnimatePresence>
       </div>
     </div>
   );
 };
+
+export default NotificationsPage;

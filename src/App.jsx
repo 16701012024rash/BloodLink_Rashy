@@ -1,63 +1,62 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
-import { TopAnnouncementBar } from './components/layout/TopAnnouncementBar';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
-import { ToastContainer } from './components/common/Toast';
+import { GlobalToastContainer } from './components/common/Toast';
 
 // Pages
-import { LandingPage } from './pages/LandingPage';
-import { FindDonorsPage } from './pages/FindDonorsPage';
+import { LandingPage }        from './pages/LandingPage';
+import { FindDonorsPage }     from './pages/FindDonorsPage';
 import { EmergencyRequestPage } from './pages/EmergencyRequestPage';
-import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
-import { DonorDashboard } from './pages/DonorDashboard';
-import { RequesterDashboard } from './pages/RequesterDashboard';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { NotificationsPage } from './pages/NotificationsPage';
+import { LoginPage }          from './pages/LoginPage';
+import { RegisterPage }       from './pages/RegisterPage';
+import { UserDashboard }      from './pages/UserDashboard';
+import { AdminDashboard }     from './pages/AdminDashboard';
+import { NotificationsPage }  from './pages/NotificationsPage';
+import { ProtectedRoute, AdminRoute } from './routes/ProtectedRoute';
 
-// Scroll to top helper on route change
+// Scroll to top on route change
 function ScrollToTop() {
   const { pathname } = useLocation();
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
-
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [pathname]);
   return null;
 }
 
 export function App() {
   return (
-    <div className="flex flex-col min-h-screen bg-surface-50 text-slate-800 font-sans">
+    <div className="flex flex-col min-h-screen bg-surface-50 text-surface-800 font-sans antialiased">
       <ScrollToTop />
-      
-      {/* Top Maroon Announcement Bar (Screenshots 1, 2, 3) */}
-      <TopAnnouncementBar />
-
-      {/* Main Navbar with BloodLink drop logo and responsive navigation */}
       <Navbar />
 
-      {/* Dynamic Page Content */}
-      <div className="flex-1">
+      <main className="flex-1">
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/find-donors" element={<FindDonorsPage />} />
           <Route path="/emergency-request" element={<EmergencyRequestPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          <Route path="/donor-dashboard" element={<DonorDashboard />} />
-          <Route path="/requester-dashboard" element={<RequesterDashboard />} />
-          <Route path="/admin" element={<AdminDashboard />} />
+
+          {/* Unified User Dashboard */}
+          <Route path="/dashboard" element={
+            <ProtectedRoute><UserDashboard /></ProtectedRoute>
+          } />
+
+          {/* Legacy route aliases */}
+          <Route path="/donor-dashboard"    element={<Navigate to="/dashboard?tab=donor"    replace />} />
+          <Route path="/requester-dashboard" element={<Navigate to="/dashboard?tab=requests" replace />} />
+
+          {/* Admin Control Center */}
+          <Route path="/admin" element={
+            <AdminRoute><AdminDashboard /></AdminRoute>
+          } />
+
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </div>
+      </main>
 
-      {/* Comprehensive Healthcare Footer */}
       <Footer />
-
-      {/* Interactive Toast Notifications */}
-      <ToastContainer />
+      <GlobalToastContainer />
     </div>
   );
 }

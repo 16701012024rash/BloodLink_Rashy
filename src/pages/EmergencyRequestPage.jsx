@@ -1,465 +1,338 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  AlertTriangle, 
-  Building2, 
-  MapPin, 
-  Calendar, 
-  Phone, 
-  User, 
-  Clock, 
-  CheckCircle2, 
-  Droplet, 
-  ShieldAlert, 
-  ArrowRight,
-  Info
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  AlertTriangle, Droplet, MapPin, Clock, User, Phone, ChevronRight,
+  CheckCircle2, Loader2, Building2, Heart, ArrowLeft, FileText, Zap
 } from 'lucide-react';
-import { BLOOD_GROUPS, CITIES, BLOOD_COMPATIBILITY } from '../data/mockData';
-import { useBloodRequest } from '../context/BloodRequestContext';
 import { useAuth } from '../context/AuthContext';
+import { useBloodRequest } from '../context/BloodRequestContext';
 import { useNotification } from '../context/NotificationContext';
-import { BloodGroupBadge } from '../components/common/BloodGroupBadge';
+import { BLOOD_GROUPS } from '../data/mockData';
+import { Alert, BloodBadge, ProgressBar } from '../components/ui/index.jsx';
+
+const COMPONENTS = ['Whole Blood', 'Packed Red Blood Cells (PRBC)', 'Platelets', 'Fresh Frozen Plasma (FFP)', 'Cryoprecipitate'];
+const URGENCY = [
+  { id: 'Critical (Golden Hour)', label: 'Critical — Golden Hour', desc: 'Life-threatening. Needed within 1 hour.', cls: 'border-blood-700 bg-blood-50 text-blood-900', badge: 'bg-blood-700 text-white' },
+  { id: 'Within 6 Hours',  label: 'Within 6 Hours',  desc: 'Urgent but not immediately life-threatening.', cls: 'border-warning-500 bg-warning-50 text-warning-900', badge: 'bg-warning-500 text-white' },
+  { id: 'Within 24 Hours', label: 'Within 24 Hours', desc: 'Needed today for planned procedure.', cls: 'border-navy-500 bg-navy-50 text-navy-900', badge: 'bg-navy-600 text-white' },
+];
+
+const STEPS = ['Patient Info', 'Blood Requirements', 'Hospital & Urgency', 'Review & Submit'];
+
+const StepIndicator = ({ step, total }) => (
+  <div className="flex items-center gap-2 justify-center">
+    {Array.from({ length: total }).map((_, i) => (
+      <React.Fragment key={i}>
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+          i < step ? 'bg-success-500 text-white' : i === step ? 'bg-blood-800 text-white shadow-blood' : 'bg-surface-200 text-surface-500'
+        }`}>
+          {i < step ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+        </div>
+        {i < total - 1 && <div className={`flex-1 h-0.5 max-w-[40px] transition-all ${i < step ? 'bg-success-500' : 'bg-surface-200'}`} />}
+      </React.Fragment>
+    ))}
+  </div>
+);
 
 export const EmergencyRequestPage = () => {
   const navigate = useNavigate();
-  const { submitRequest, donors } = useBloodRequest();
   const { currentUser } = useAuth();
-  const { addNotification, showToast } = useNotification();
+  const { submitRequest } = useBloodRequest();
+  const { showToast, addNotification } = useNotification();
 
-  const [formData, setFormData] = useState({
+  const [step, setStep] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(null);
+  const [error, setError] = useState('');
+
+  const [form, setForm] = useState({
     patientName: '',
-    requesterName: currentUser ? currentUser.name : '',
-    requesterEmail: currentUser ? currentUser.email : '',
+    requesterName: currentUser?.name || currentUser?.full_name || '',
+    requesterEmail: currentUser?.email || '',
     contactNumber: currentUser?.phone || '',
-    bloodGroup: 'A+',
-    unitsRequired: 2,
+    bloodGroup: 'O+',
+    componentType: 'Whole Blood',
+    unitsRequired: '1',
     hospitalName: '',
-    city: 'New Delhi',
     hospitalAddress: '',
-    roomNumber: '',
-    requiredDate: 'Immediate',
-    priority: 'Critical',
-    notes: ''
+    city: currentUser?.city || '',
+    urgency: 'Critical (Golden Hour)',
+    notes: '',
   });
 
-  const [errors, setErrors] = useState({});
-  const [submittedRequest, setSubmittedRequest] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  // Live estimate of matching available donors
-  const compatibleGroups = BLOOD_COMPATIBILITY[formData.bloodGroup]?.canReceiveFrom || [formData.bloodGroup];
-  const matchingDonorsCount = donors.filter(d => 
-    d.isAvailable && 
-    compatibleGroups.includes(d.bloodGroup) &&
-    (formData.city === 'All Cities' || d.city.toLowerCase().includes(formData.city.toLowerCase()))
-  ).length;
-
-  const validate = () => {
-    const newErrors = {};
-    if (!formData.patientName.trim()) newErrors.patientName = 'Patient name is required';
-    if (!formData.hospitalName.trim()) newErrors.hospitalName = 'Hospital name is required';
-    if (!formData.contactNumber.trim() || formData.contactNumber.length < 8) {
-      newErrors.contactNumber = 'Valid contact number is required';
-    }
-    if (!formData.hospitalAddress.trim()) newErrors.hospitalAddress = 'Hospital location/address is required';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const stepValid = () => {
+    if (step === 0) return form.patientName && form.requesterName && form.contactNumber;
+    if (step === 1) return form.bloodGroup && form.componentType && form.unitsRequired;
+    if (step === 2) return form.hospitalName && form.city;
+    return true;
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!validate()) {
-      showToast('Please fix the errors in the form', 'error');
-      return;
-    }
-
-    setIsSubmitting(true);
-    setTimeout(() => {
-      const created = submitRequest(formData);
-      setSubmittedRequest(created);
-      setIsSubmitting(false);
-
-      addNotification({
-        title: `🚨 Emergency Blood Request Dispatched: ${formData.unitsRequired} Units of ${formData.bloodGroup}`,
-        message: `${created.hospitalName} (${created.city}) - ${matchingDonorsCount} nearby donors alerted!`,
-        type: 'emergency',
-        urgent: true,
-        actionUrl: '/requester-dashboard'
+  const handleSubmit = async () => {
+    if (!currentUser) { navigate('/login', { state: { from: { pathname: '/emergency-request' } } }); return; }
+    setSubmitting(true); setError('');
+    try {
+      const req = await submitRequest({
+        patientName: form.patientName,
+        requesterName: form.requesterName,
+        requesterEmail: form.requesterEmail,
+        contactNumber: form.contactNumber,
+        bloodGroup: form.bloodGroup,
+        componentType: form.componentType,
+        unitsRequired: parseInt(form.unitsRequired, 10),
+        hospitalName: form.hospitalName,
+        hospitalAddress: form.hospitalAddress,
+        city: form.city,
+        priority: form.urgency,
+        notes: form.notes,
+        latitude: 28.6139,
+        longitude: 77.2090,
       });
-
-      showToast('Emergency request broadcasted successfully!', 'emergency');
-    }, 600);
+      setSubmitted(req);
+      addNotification({ title: 'Emergency Request Submitted', message: `Request ${req.id} is live. ${req.matchedDonorsCount || 0} donors notified.`, type: 'success' });
+      showToast('Emergency request submitted! Donors are being notified.', 'success');
+    } catch (err) {
+      setError(err.message || 'Failed to submit request. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-surface-50 py-10 px-4">
+        <div className="max-w-2xl mx-auto">
+          <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="card overflow-hidden">
+            <div className="bg-gradient-crimson p-7 text-white text-center">
+              <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-4">
+                <CheckCircle2 className="w-9 h-9 text-white" />
+              </div>
+              <h2 className="text-2xl font-black mb-1">Request Submitted!</h2>
+              <p className="text-blood-200 text-sm">Your emergency blood request is live on the network</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-surface-50 rounded-xl p-4 space-y-3">
+                {[
+                  { label: 'Request ID', value: submitted.id },
+                  { label: 'Blood Group', value: submitted.bloodGroup || submitted.blood_group },
+                  { label: 'Hospital', value: submitted.hospitalName || submitted.hospital_name },
+                  { label: 'Urgency', value: submitted.urgency_level || submitted.priority },
+                  { label: 'Donors Notified', value: `${submitted.matchedDonorsCount || 0} compatible donors` },
+                  { label: 'Status', value: 'Active — Matching in progress' },
+                ].map(r => (
+                  <div key={r.label} className="flex justify-between text-sm">
+                    <span className="text-surface-500">{r.label}</span>
+                    <span className="font-semibold text-surface-900">{r.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <Alert type="info" title="What happens next?">
+                Compatible donors within your area have been notified via app alerts. Donor responses will appear in your dashboard in real time.
+              </Alert>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button onClick={() => navigate('/dashboard?tab=requests')} className="btn btn-lg btn-primary flex-1 justify-center">
+                  <Heart className="w-5 h-5" />Track in Dashboard
+                </button>
+                <button onClick={() => { setSubmitted(null); setStep(0); setForm(p => ({ ...p, patientName: '', notes: '' })); }}
+                  className="btn btn-lg btn-secondary flex-1 justify-center">
+                  New Request
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-surface-50 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto space-y-8">
-        
-        {/* Banner Alert for Emergency Cases */}
-        <div className="bg-red-50 border-2 border-red-200 rounded-3xl p-5 flex items-start space-x-4 shadow-sm">
-          <div className="w-10 h-10 rounded-2xl bg-red-600 text-white flex items-center justify-center shrink-0 animate-pulse">
-            <AlertTriangle className="w-6 h-6" />
+    <div className="min-h-screen bg-surface-50 py-10 px-4">
+      <div className="max-w-2xl mx-auto">
+
+        {/* Auth guard */}
+        {!currentUser && (
+          <Alert type="warning" title="Sign in required" className="mb-5">
+            Please <button onClick={() => navigate('/login')} className="underline font-semibold">sign in</button> to submit an emergency blood request.
+          </Alert>
+        )}
+
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-blood-800 flex items-center justify-center shadow-blood">
+            <AlertTriangle className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h3 className="font-extrabold text-red-900 text-sm sm:text-base">
-              Emergency Blood Request Desk (Active 24x7)
-            </h3>
-            <p className="text-xs text-red-700 mt-0.5 leading-relaxed">
-              Every request submitted here is automatically broadcasted with high priority to registered volunteer donors, regional blood banks, and verified coordinators within your hospital's zone.
-            </p>
+            <h1 className="text-2xl font-bold text-surface-900">Emergency Blood Request</h1>
+            <p className="text-sm text-surface-500">Step {step + 1} of {STEPS.length}: {STEPS[step]}</p>
           </div>
         </div>
 
-        {/* MAIN REQUEST CARD */}
-        <div className="bg-white rounded-3xl p-6 sm:p-10 border border-surface-200 shadow-card">
-          <div className="border-b border-surface-200 pb-5 mb-6">
-            <div className="flex items-center space-x-2 text-blood-800 text-xs font-bold uppercase tracking-wider mb-1">
-              <Droplet className="w-4 h-4 fill-blood-800" />
-              <span>Step 1 of 1: Request Details</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              Submit Blood Request
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500 mt-1">
-              Provide hospital and patient details. Matched donors will coordinate directly through our verified protocol.
-            </p>
-          </div>
+        {/* Step indicator */}
+        <div className="mb-6">
+          <StepIndicator step={step} total={STEPS.length} />
+          <ProgressBar value={step} max={STEPS.length - 1} className="mt-3" />
+        </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            
-            {/* Section 1: Patient & Blood Requirement */}
-            <div>
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-                1. Patient & Transfusion Details
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Patient Name */}
-                <div className="sm:col-span-1">
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Patient Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Maria Rodriguez"
-                    value={formData.patientName}
-                    onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
-                    className={`w-full text-xs px-4 py-3 rounded-2xl border ${
-                      errors.patientName ? 'border-red-500 bg-red-50' : 'border-slate-200 bg-surface-50'
-                    } focus:outline-none focus:border-blood-800`}
-                  />
-                  {errors.patientName && (
-                    <span className="text-[10px] text-red-600 font-semibold mt-1 block">
-                      {errors.patientName}
-                    </span>
-                  )}
-                </div>
+        {error && <Alert type="error" className="mb-5" onClose={() => setError('')}>{error}</Alert>}
 
-                {/* Blood Group */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Required Blood Group *
-                  </label>
-                  <select
-                    value={formData.bloodGroup}
-                    onChange={(e) => setFormData({ ...formData, bloodGroup: e.target.value })}
-                    className="w-full text-xs font-bold px-4 py-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800 text-blood-900"
-                  >
-                    {BLOOD_GROUPS.map(bg => (
-                      <option key={bg} value={bg}>{bg}</option>
-                    ))}
-                  </select>
-                </div>
+        <div className="card overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div key={step} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2 }}
+              className="p-6 space-y-5">
 
-                {/* Units Required */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Units Required *
-                  </label>
-                  <select
-                    value={formData.unitsRequired}
-                    onChange={(e) => setFormData({ ...formData, unitsRequired: parseInt(e.target.value, 10) })}
-                    className="w-full text-xs font-bold px-4 py-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800"
-                  >
-                    <option value="1">1 Unit (approx. 450 ml)</option>
-                    <option value="2">2 Units</option>
-                    <option value="3">3 Units</option>
-                    <option value="4">4 Units</option>
-                    <option value="5">5+ Units (Massive Trauma)</option>
-                  </select>
-                </div>
-              </div>
+              {/* Step 0: Patient Info */}
+              {step === 0 && (
+                <>
+                  <h3 className="font-bold text-surface-900 flex items-center gap-2"><User className="w-5 h-5 text-blood-700" />Patient Information</h3>
+                  <div>
+                    <label className="label label-required">Patient Name</label>
+                    <input value={form.patientName} onChange={e => setF('patientName', e.target.value)} placeholder="Full name of the patient" className="input" />
+                  </div>
+                  <div>
+                    <label className="label label-required">Your Name (Requester)</label>
+                    <input value={form.requesterName} onChange={e => setF('requesterName', e.target.value)} placeholder="Your full name" className="input" />
+                  </div>
+                  <div>
+                    <label className="label label-required">Contact Number</label>
+                    <div className="relative">
+                      <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" />
+                      <input value={form.contactNumber} onChange={e => setF('contactNumber', e.target.value)} placeholder="+91 98765 43210" className="input pl-10" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Email (optional)</label>
+                    <input type="email" value={form.requesterEmail} onChange={e => setF('requesterEmail', e.target.value)} placeholder="For status updates" className="input" />
+                  </div>
+                </>
+              )}
 
-              {/* Priority Selector Pill Buttons */}
-              <div className="mt-4">
-                <label className="block text-xs font-bold text-slate-700 mb-2">
-                  Emergency Priority Level *
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {[
-                    { level: 'Critical', desc: 'Immediate (Golden Hour)', color: 'bg-red-50 border-red-300 text-red-700' },
-                    { level: 'High', desc: 'Within 6 Hours', color: 'bg-amber-50 border-amber-300 text-amber-800' },
-                    { level: 'Medium', desc: 'Within 24 Hours', color: 'bg-blue-50 border-blue-300 text-blue-800' },
-                    { level: 'Normal', desc: 'Scheduled / Advance', color: 'bg-slate-50 border-slate-300 text-slate-700' }
-                  ].map(p => (
-                    <button
-                      key={p.level}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, priority: p.level })}
-                      className={`p-3 rounded-2xl border text-left transition ${
-                        formData.priority === p.level
-                          ? 'border-2 border-blood-800 bg-blood-50 shadow-xs'
-                          : 'border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="font-bold text-xs text-slate-900 flex items-center justify-between">
-                        <span>{p.level}</span>
-                        {formData.priority === p.level && <span className="text-blood-800 font-bold">●</span>}
+              {/* Step 1: Blood Requirements */}
+              {step === 1 && (
+                <>
+                  <h3 className="font-bold text-surface-900 flex items-center gap-2"><Droplet className="w-5 h-5 text-blood-700" />Blood Requirements</h3>
+                  <div>
+                    <label className="label label-required">Blood Group Required</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {BLOOD_GROUPS.map(bg => (
+                        <button key={bg} type="button" onClick={() => setF('bloodGroup', bg)}
+                          className={`py-2.5 rounded-xl text-sm font-black transition-all ${form.bloodGroup === bg ? 'bg-blood-800 text-white shadow-blood scale-105' : 'bg-surface-100 text-surface-700 hover:bg-surface-200'}`}>
+                          {bg}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label label-required">Blood Component</label>
+                    <div className="space-y-2">
+                      {COMPONENTS.map(c => (
+                        <label key={c} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${form.componentType === c ? 'border-blood-700 bg-blood-50' : 'border-surface-200 hover:border-surface-300'}`}>
+                          <input type="radio" name="component" value={c} checked={form.componentType === c} onChange={e => setF('componentType', e.target.value)} className="text-blood-700 focus:ring-blood-700" />
+                          <span className="text-sm font-medium text-surface-800">{c}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label label-required">Units Required</label>
+                    <input type="number" min={1} max={20} value={form.unitsRequired} onChange={e => setF('unitsRequired', e.target.value)} className="input w-32" />
+                    <p className="text-xs text-surface-400 mt-1">1 unit ≈ 450ml of whole blood</p>
+                  </div>
+                </>
+              )}
+
+              {/* Step 2: Hospital & Urgency */}
+              {step === 2 && (
+                <>
+                  <h3 className="font-bold text-surface-900 flex items-center gap-2"><Building2 className="w-5 h-5 text-blood-700" />Hospital & Urgency</h3>
+                  <div>
+                    <label className="label label-required">Hospital Name</label>
+                    <input value={form.hospitalName} onChange={e => setF('hospitalName', e.target.value)} placeholder="e.g. AIIMS New Delhi" className="input" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label label-required">City</label>
+                      <input value={form.city} onChange={e => setF('city', e.target.value)} placeholder="City" className="input" />
+                    </div>
+                    <div>
+                      <label className="label">Ward / Room</label>
+                      <input value={form.hospitalAddress} onChange={e => setF('hospitalAddress', e.target.value)} placeholder="ICU Ward 3" className="input" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label label-required">Urgency Level</label>
+                    <div className="space-y-2">
+                      {URGENCY.map(u => (
+                        <label key={u.id} className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${form.urgency === u.id ? u.cls + ' border-current' : 'border-surface-200 bg-white hover:border-surface-300'}`}>
+                          <input type="radio" name="urgency" value={u.id} checked={form.urgency === u.id} onChange={e => setF('urgency', e.target.value)} className="mt-0.5 text-blood-700 focus:ring-blood-700" />
+                          <div>
+                            <div className="font-bold text-sm">{u.label}</div>
+                            <div className="text-xs opacity-75 mt-0.5">{u.desc}</div>
+                          </div>
+                          {form.urgency === u.id && <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-full ${u.badge} flex-shrink-0`}>Selected</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Additional Notes</label>
+                    <textarea value={form.notes} onChange={e => setF('notes', e.target.value)} rows={3} placeholder="Medical context, special requirements..." className="input resize-none" />
+                  </div>
+                </>
+              )}
+
+              {/* Step 3: Review */}
+              {step === 3 && (
+                <>
+                  <h3 className="font-bold text-surface-900 flex items-center gap-2"><FileText className="w-5 h-5 text-blood-700" />Review & Submit</h3>
+                  <div className="bg-surface-50 rounded-xl divide-y divide-surface-200">
+                    {[
+                      { label: 'Patient', value: form.patientName },
+                      { label: 'Blood Group', value: <BloodBadge group={form.bloodGroup} size="sm" /> },
+                      { label: 'Component', value: form.componentType },
+                      { label: 'Units', value: `${form.unitsRequired} unit(s)` },
+                      { label: 'Hospital', value: form.hospitalName },
+                      { label: 'City', value: form.city },
+                      { label: 'Urgency', value: form.urgency },
+                      { label: 'Contact', value: form.contactNumber },
+                    ].map(r => (
+                      <div key={r.label} className="flex items-center justify-between py-3 px-4">
+                        <span className="text-sm text-surface-500">{r.label}</span>
+                        <span className="text-sm font-semibold text-surface-900">{r.value}</span>
                       </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">{p.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Section 2: Hospital & Location Details */}
-            <div className="pt-4 border-t border-surface-200">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-                2. Hospital & Location Information
-              </h3>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Hospital Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. City Hospital / AIIMS / Fortis"
-                    value={formData.hospitalName}
-                    onChange={(e) => setFormData({ ...formData, hospitalName: e.target.value })}
-                    className={`w-full text-xs px-4 py-3 rounded-2xl border ${
-                      errors.hospitalName ? 'border-red-500 bg-red-50' : 'border-slate-200 bg-surface-50'
-                    } focus:outline-none focus:border-blood-800`}
-                  />
-                  {errors.hospitalName && (
-                    <span className="text-[10px] text-red-600 font-semibold mt-1 block">
-                      {errors.hospitalName}
-                    </span>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    City / Zone *
-                  </label>
-                  <select
-                    value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                    className="w-full text-xs font-semibold px-4 py-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800 text-slate-800"
-                  >
-                    {CITIES.slice(1).map(c => (
-                      <option key={c} value={c}>{c}</option>
                     ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Hospital Campus Address / Area *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Sector 14, Ring Road, Delhi"
-                    value={formData.hospitalAddress}
-                    onChange={(e) => setFormData({ ...formData, hospitalAddress: e.target.value })}
-                    className={`w-full text-xs px-4 py-3 rounded-2xl border ${
-                      errors.hospitalAddress ? 'border-red-500 bg-red-50' : 'border-slate-200 bg-surface-50'
-                    } focus:outline-none focus:border-blood-800`}
-                  />
-                  {errors.hospitalAddress && (
-                    <span className="text-[10px] text-red-600 font-semibold mt-1 block">
-                      {errors.hospitalAddress}
-                    </span>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Ward / Room / Bed Number
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. ICU Bed 4 / 3rd Floor"
-                    value={formData.roomNumber}
-                    onChange={(e) => setFormData({ ...formData, roomNumber: e.target.value })}
-                    className="w-full text-xs px-4 py-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 3: Contact Person & Notes */}
-            <div className="pt-4 border-t border-surface-200">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-                3. Attending Contact & Medical Notes
-              </h3>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Contact Person Phone *
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+91 98765 43210"
-                    value={formData.contactNumber}
-                    onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
-                    className={`w-full text-xs px-4 py-3 rounded-2xl border ${
-                      errors.contactNumber ? 'border-red-500 bg-red-50' : 'border-slate-200 bg-surface-50'
-                    } focus:outline-none focus:border-blood-800`}
-                  />
-                  {errors.contactNumber && (
-                    <span className="text-[10px] text-red-600 font-semibold mt-1 block">
-                      {errors.contactNumber}
-                    </span>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Required By (Date / Time)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Immediate / 22 Nov 2026, 4:00 PM"
-                    value={formData.requiredDate}
-                    onChange={(e) => setFormData({ ...formData, requiredDate: e.target.value })}
-                    className="w-full text-xs px-4 py-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Additional Clinical Notes / Medical Condition
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Emergency surgery scheduled. Donor replacement required by hospital blood bank."
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    className="w-full text-xs p-3 rounded-2xl border border-slate-200 bg-surface-50 focus:outline-none focus:border-blood-800"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* LIVE MATCH CALCULATOR WIDGET */}
-            <div className="p-4 bg-blood-50/70 border border-blood-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-blood-800 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                  {matchingDonorsCount}
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">
-                    {matchingDonorsCount} Compatible Donors Found in {formData.city}
                   </div>
-                  <div className="text-[11px] text-slate-600">
-                    Acceptable groups: {compatibleGroups.join(', ')}
-                  </div>
-                </div>
-              </div>
+                  <Alert type="warning" title="Confirm before submitting">
+                    This request will immediately alert all compatible verified donors in your area. Only submit for genuine medical emergencies.
+                  </Alert>
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
 
-              <div className="text-xs text-blood-800 font-semibold flex items-center space-x-1">
-                <span>Auto-dispatch ready</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              </div>
-            </div>
-
-            {/* Submit Action Button */}
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-blood-800 hover:bg-blood-900 text-white py-4 px-6 rounded-full font-bold text-sm shadow-maroon hover:shadow-lg transition flex items-center justify-center space-x-2 disabled:opacity-70"
-              >
-                {isSubmitting ? (
-                  <span>Broadcasting Emergency Request...</span>
-                ) : (
-                  <>
-                    <Droplet className="w-4 h-4 fill-white" />
-                    <span>Broadcast Emergency Blood Request Now</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
+          {/* Navigation */}
+          <div className="px-6 pb-6 flex items-center justify-between gap-3 border-t border-surface-100 pt-4">
+            <button disabled={step === 0} onClick={() => setStep(p => p - 1)} className="btn btn-md btn-secondary disabled:opacity-40">
+              <ArrowLeft className="w-4 h-4" />Back
+            </button>
+            {step < STEPS.length - 1 ? (
+              <button disabled={!stepValid()} onClick={() => setStep(p => p + 1)} className="btn btn-md btn-primary disabled:opacity-40">
+                Next <ChevronRight className="w-4 h-4" />
               </button>
-            </div>
-
-          </form>
-        </div>
-
-      </div>
-
-      {/* SUCCESS CONFIRMATION MODAL */}
-      {submittedRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-8 shadow-2xl border-2 border-blood-800 animate-in zoom-in-95 text-center">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-9 h-9" />
-            </div>
-
-            <span className="text-xs font-bold text-blood-800 uppercase tracking-wider">
-              Request Dispatched Successfully
-            </span>
-            <h2 className="text-2xl font-black text-slate-900 mt-1">
-              Help is on the way!
-            </h2>
-            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-              Your request ID is <strong className="text-slate-900 font-mono">{submittedRequest.id}</strong>. We have broadcasted this urgent need to registered donors across {submittedRequest.city}.
-            </p>
-
-            <div className="my-6 p-4 bg-surface-50 rounded-2xl border border-surface-200 text-left text-xs space-y-2">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Patient:</span>
-                <span className="font-bold text-slate-800">{submittedRequest.patientName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Blood Group:</span>
-                <span className="font-bold text-blood-800">{submittedRequest.bloodGroup} ({submittedRequest.unitsRequired} Units)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Hospital:</span>
-                <span className="font-semibold text-slate-800">{submittedRequest.hospitalName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Priority:</span>
-                <span className="font-bold text-red-600">{submittedRequest.priority}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <button
-                onClick={() => navigate('/requester-dashboard')}
-                className="w-full py-3 rounded-full bg-blood-800 hover:bg-blood-900 text-white text-xs font-bold transition shadow-sm"
-              >
-                Go to Requester Dashboard
+            ) : (
+              <button onClick={handleSubmit} disabled={submitting || !currentUser} className="btn btn-md btn-primary disabled:opacity-40">
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {submitting ? 'Submitting...' : 'Submit Emergency Request'}
               </button>
-              <button
-                onClick={() => setSubmittedRequest(null)}
-                className="w-full py-3 rounded-full border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
-              >
-                Submit Another Request
-              </button>
-            </div>
+            )}
           </div>
         </div>
-      )}
-
+      </div>
     </div>
   );
 };
+
+export default EmergencyRequestPage;
