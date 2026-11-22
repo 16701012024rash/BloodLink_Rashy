@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { INITIAL_NOTIFICATIONS } from '../data/mockData';
+import { notificationService } from '../services/notificationService';
+import { isSupabaseConfigured } from '../services/supabaseClient';
 
 const NotificationContext = createContext();
 
@@ -15,14 +17,20 @@ export const NotificationProvider = ({ children }) => {
     localStorage.setItem('bloodlink_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.read && !n.is_read).length;
 
-  const markAsRead = (id) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  const markAsRead = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true, is_read: true } : n));
+    if (isSupabaseConfigured) {
+      await notificationService.markAsRead(id);
+    }
   };
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  const markAllAsRead = async (userId) => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true, is_read: true })));
+    if (isSupabaseConfigured && userId) {
+      await notificationService.markAllAsRead(userId);
+    }
   };
 
   const addNotification = ({ title, message, type = 'update', urgent = false, actionUrl = '#' }) => {
@@ -31,10 +39,14 @@ export const NotificationProvider = ({ children }) => {
       title,
       message,
       type,
+      notification_type: type,
       urgent,
       actionUrl,
+      action_url: actionUrl,
       timestamp: 'Just now',
-      read: false
+      created_at: new Date().toISOString(),
+      read: false,
+      is_read: false
     };
     setNotifications(prev => [newNotif, ...prev]);
     showToast(title, type);
@@ -49,7 +61,7 @@ export const NotificationProvider = ({ children }) => {
     setToasts(prev => [...prev, { id: toastId, message, type }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== toastId));
-    }, 4000);
+    }, 4500);
   };
 
   const removeToast = (id) => {
