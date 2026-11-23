@@ -22,6 +22,18 @@ export function normalizeBloodRequest(r) {
   const reqName = r.requester_name || r.requester?.full_name || r.requesterName || '';
 
   return {
+    // Existing fields ...
+    matchedDonorName: (() => {
+      // Prefer explicit column if present
+      if (r.matched_donor_name) return r.matched_donor_name;
+      // Fallback: try to extract from notes JSON (if stored as JSON string)
+      try {
+        const parsed = typeof r.notes === 'string' ? JSON.parse(r.notes) : {};
+        return parsed.donorName || '';
+      } catch {
+        return '';
+      }
+    })(),
     ...r,
     id: r.id,
     patientName: patient,
@@ -227,6 +239,15 @@ export const requestService = {
       return { requestId, donorId, status };
     }
 
+    // Load donor profile for name (used in notification and DB fields)
+    const { data: donorProfile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', donorId)
+      .single();
+    const donorName = donorProfile?.full_name || null;
+
+    // Record donor response
     const { data, error } = await supabase
       .from('donor_responses')
       .upsert({
@@ -238,21 +259,52 @@ export const requestService = {
       }, { onConflict: 'request_id,donor_id' })
       .select()
       .single();
-
     if (error) throw error;
 
-    // If accepted, update request status to 'In Progress - Donor Found'
+    // If the donor accepted, update the request with matched donor info and notify the requester
     if (status === 'Accepted') {
-      const { error: updErr1 } = await supabase
+      let updatedReq = null;
+      // Try updating new schema columns first
+      const { data: primary, error: primaryErr } = await supabase
         .from('blood_requests')
-        .update({ status: 'In Progress - Donor Found', updated_at: new Date().toISOString() })
-        .eq('id', requestId);
-
-      if (updErr1) {
-        await supabase
+        .update({
+          status: 'In Progress - Donor Found',
+          matched_donor_id: donorId,
+          matched_donor_name: donorName,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+        .select('*')
+        .single();
+      if (!primaryErr && primary) {
+        updatedReq = primary;
+      } else {
+        // Fallback to legacy columns, store donor info in notes JSON
+        const { data: fallback, error: fallbackErr } = await supabase
           .from('blood_requests')
-          .update({ request_status: 'In Progress - Donor Found', updated_at: new Date().toISOString() })
-          .eq('id', requestId);
+          .update({
+            request_status: 'In Progress - Donor Found',
+            notes: JSON.stringify({ donorId, donorName })
+          })
+          .eq('id', requestId)
+          .select('*')
+          .single();
+        if (fallbackErr) throw fallbackErr;
+        updatedReq = fallback;
+      }
+
+      // Create notification for the original requester
+      if (updatedReq && updatedReq.requester_id) {
+        const requesterId = updatedReq.requester_id;
+        await import('./notificationService').then(({ notificationService }) =>
+          notificationService.createNotification({
+            userId: requesterId,
+            title: 'Donor Accepted Your Request',
+            message: `${donorName || 'A donor'} has accepted your blood request`,
+            type: 'progress',
+            actionUrl: '/dashboard?tab=requests'
+          })
+        );
       }
     }
 
@@ -298,31 +350,25 @@ export const requestService = {
    */
   subscribeToRequests(callback) {
     if (!isSupabaseConfigured) {
+      // Mock mode: no realtime, just return dummy unsubscribe
       return { unsubscribe: () => {} };
     }
 
     const channel = supabase
       .channel('realtime:blood_requests')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'blood_requests' },
-        (payload) => {
-          const normalizedPayload = {
-            ...payload,
-            new: payload.new ? normalizeBloodRequest(payload.new) : null,
-            old: payload.old ? normalizeBloodRequest(payload.old) : null,
-          };
-          callback(normalizedPayload);
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'blood_requests' }, (payload) => {
+        const normalizedPayload = {
+          ...payload,
+          new: payload.new ? normalizeBloodRequest(payload.new) : null,
+          old: payload.old ? normalizeBloodRequest(payload.old) : null,
+        };
+        callback(normalizedPayload);
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           console.log('[BloodLink Realtime] Connected to blood_requests stream');
         }
       });
-
-    return {
-      unsubscribe: () => supabase.removeChannel(channel)
-    };
+    return { unsubscribe: () => supabase.removeChannel(channel) };
   }
 };

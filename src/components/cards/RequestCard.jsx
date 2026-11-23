@@ -67,6 +67,9 @@ export const RequestCard = ({ request, onAccept, onDecline, onCancel, showAction
         <div className={`flex items-center gap-2 mt-4 p-2.5 rounded-lg border ${sts.bg} text-xs`}>
           <StatusIcon className={`w-4 h-4 flex-shrink-0 ${sts.cls} ${status === 'Pending' ? 'animate-spin' : ''}`} />
           <span className={`font-semibold ${sts.cls}`}>{sts.label}</span>
+          {request.matchedDonorName && (
+            <span className="ml-2 text-xs text-surface-600">Donor: {request.matchedDonorName}</span>
+          )}
           {request.matchedDonorsCount != null && (
             <span className="ml-auto text-surface-500">{request.matchedDonorsCount} donor{request.matchedDonorsCount !== 1 ? 's' : ''} notified</span>
           )}
