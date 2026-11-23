@@ -18,77 +18,74 @@ export const donorService = {
       });
     }
 
-    let query = supabase
-      .from('donor_profiles')
-      .select(`
-        user_id,
-        blood_group,
-        city,
-        latitude,
-        longitude,
-        availability,
-        verification_status,
-        last_donation_date,
-        eligibility_status,
-        next_eligible_date,
-        total_donations,
-        lives_impacted,
-        badges,
-        bio,
-        preferred_radius_km,
-        profiles!inner(id, full_name, email, phone, profile_image)
-      `);
+    try {
+      let query = supabase
+        .from('donor_profiles')
+        .select(`
+          *,
+          profiles!inner(id, full_name, email, phone, profile_image, city, latitude, longitude)
+        `);
 
-    if (availabilityOnly) {
-      query = query.eq('availability', true);
+      if (availabilityOnly) {
+        query = query.eq('availability', true);
+      }
+
+      if (bloodGroup && bloodGroup !== 'All') {
+        query = query.eq('blood_group', bloodGroup);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.warn('[BloodLink] Joined getDonors failed, falling back:', error.message);
+        return INITIAL_DONORS;
+      }
+
+      // Map database record to clean UI donor format
+      const formatted = (data || []).map(record => {
+        const donorCity = record.city || record.profiles?.city || 'New Delhi';
+        const donorLat = Number(record.latitude || record.profiles?.latitude || 28.6139);
+        const donorLon = Number(record.longitude || record.profiles?.longitude || 77.2090);
+        const distance = (targetLat && targetLon)
+          ? calculateDistanceKm(targetLat, targetLon, donorLat, donorLon)
+          : null;
+
+        return {
+          id: record.profiles?.id || record.user_id,
+          name: record.profiles?.full_name || 'Donor',
+          email: record.profiles?.email || '',
+          phone: record.profiles?.phone || '',
+          bloodGroup: record.blood_group,
+          city: donorCity,
+          latitude: donorLat,
+          longitude: donorLon,
+          isAvailable: Boolean(record.availability),
+          isVerified: record.verification_status === 'verified',
+          verificationStatus: record.verification_status,
+          lastDonated: record.last_donation_date || 'First Time Donor',
+          eligibilityStatus: record.eligibility_status,
+          nextEligibleDate: record.next_eligible_date || 'Eligible Now!',
+          totalDonations: record.total_donations || 0,
+          livesImpacted: record.lives_impacted || 0,
+          badges: record.badges || ['Lifesaver'],
+          bio: record.bio || '',
+          avatar: record.profiles?.profile_image || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200',
+          distanceKm: distance
+        };
+      });
+
+      if (city && city !== 'All Cities') {
+        return formatted.filter(d => d.city.toLowerCase().includes(city.toLowerCase()));
+      }
+
+      if (targetLat && targetLon && maxRadiusKm) {
+        return formatted.filter(d => d.distanceKm == null || d.distanceKm <= maxRadiusKm);
+      }
+
+      return formatted;
+    } catch (err) {
+      console.error('[BloodLink] Failed to fetch donors:', err);
+      return INITIAL_DONORS;
     }
-
-    if (bloodGroup && bloodGroup !== 'All') {
-      query = query.eq('blood_group', bloodGroup);
-    }
-
-    if (city && city !== 'All Cities') {
-      query = query.ilike('city', `%${city}%`);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    // Map database record to clean UI donor format
-    const formatted = data.map(record => {
-      const distance = (targetLat && targetLon && record.latitude && record.longitude)
-        ? calculateDistanceKm(targetLat, targetLon, record.latitude, record.longitude)
-        : null;
-
-      return {
-        id: record.profiles.id,
-        name: record.profiles.full_name,
-        email: record.profiles.email,
-        phone: record.profiles.phone,
-        bloodGroup: record.blood_group,
-        city: record.city,
-        latitude: record.latitude,
-        longitude: record.longitude,
-        isAvailable: record.availability,
-        isVerified: record.verification_status === 'verified',
-        verificationStatus: record.verification_status,
-        lastDonated: record.last_donation_date || 'First Time Donor',
-        eligibilityStatus: record.eligibility_status,
-        nextEligibleDate: record.next_eligible_date || 'Eligible Now!',
-        totalDonations: record.total_donations,
-        livesImpacted: record.lives_impacted,
-        badges: record.badges || ['Lifesaver'],
-        bio: record.bio || '',
-        avatar: record.profiles.profile_image,
-        distanceKm: distance
-      };
-    });
-
-    if (targetLat && targetLon && maxRadiusKm) {
-      return formatted.filter(d => d.distanceKm == null || d.distanceKm <= maxRadiusKm);
-    }
-
-    return formatted;
   },
 
   /**

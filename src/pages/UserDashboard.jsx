@@ -30,7 +30,8 @@ const DASH_TABS = [
    OVERVIEW TAB
    ════════════════════════════════════════════ */
 const OverviewTab = ({ user, stats, requests, notifications, onToggleAvailability }) => {
-  const myActiveRequests = requests.filter(r => r.requesterEmail === user?.email && (r.status === 'Pending' || r.request_status === 'Pending'));
+  const isMyReq = (r) => (user?.id && r.requester_id === user.id) || (user?.email && (r.requesterEmail === user.email || r.requester?.email === user.email));
+  const myActiveRequests = requests.filter(r => isMyReq(r) && (r.status === 'Pending' || r.request_status === 'Pending'));
   const unreadNotifs = notifications.filter(n => !n.read && !n.is_read).length;
   const profilePct = [user?.full_name || user?.name, user?.email, user?.phone, user?.bloodGroup, user?.city].filter(Boolean).length * 20;
 
@@ -119,7 +120,9 @@ const OverviewTab = ({ user, stats, requests, notifications, onToggleAvailabilit
    DONOR ACTIVITY TAB
    ════════════════════════════════════════════ */
 const DonorTab = ({ user, requests, onAccept, onDecline, onToggleAvailability }) => {
-  const incomingRequests = requests.filter(r => r.status === 'Pending' || r.request_status === 'Pending');
+  // Show active requests from other users
+  const isMine = (r) => (user?.id && r.requester_id === user.id) || (user?.email && (r.requesterEmail === user.email || r.requester?.email === user.email));
+  const incomingRequests = requests.filter(r => (r.status === 'Pending' || r.request_status === 'Pending') && !isMine(r));
 
   if (!user?.isDonor) {
     return (
@@ -193,7 +196,8 @@ const DonorTab = ({ user, requests, onAccept, onDecline, onToggleAvailability })
    ════════════════════════════════════════════ */
 const RequestsTab = ({ user, requests, onCancel }) => {
   const [filter, setFilter] = useState('active');
-  const myRequests = requests.filter(r => r.requesterEmail === user?.email || r.requester_id === user?.id);
+  const isMine = (r) => (user?.id && r.requester_id === user.id) || (user?.email && (r.requesterEmail === user.email || r.requester?.email === user.email));
+  const myRequests = requests.filter(isMine);
   const active = myRequests.filter(r => r.status === 'Pending' || r.request_status === 'Pending' || r.status?.includes('In Progress'));
   const completed = myRequests.filter(r => r.status === 'Completed' || r.request_status === 'Fulfilled');
   const cancelled = myRequests.filter(r => r.status === 'Cancelled');

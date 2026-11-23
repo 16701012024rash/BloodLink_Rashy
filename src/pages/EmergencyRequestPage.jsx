@@ -14,7 +14,7 @@ import { Alert, BloodBadge, ProgressBar } from '../components/ui/index.jsx';
 const COMPONENTS = ['Whole Blood', 'Packed Red Blood Cells (PRBC)', 'Platelets', 'Fresh Frozen Plasma (FFP)', 'Cryoprecipitate'];
 const URGENCY = [
   { id: 'Critical (Golden Hour)', label: 'Critical — Golden Hour', desc: 'Life-threatening. Needed within 1 hour.', cls: 'border-blood-700 bg-blood-50 text-blood-900', badge: 'bg-blood-700 text-white' },
-  { id: 'Within 6 Hours',  label: 'Within 6 Hours',  desc: 'Urgent but not immediately life-threatening.', cls: 'border-warning-500 bg-warning-50 text-warning-900', badge: 'bg-warning-500 text-white' },
+  { id: 'Within 6 Hours', label: 'Within 6 Hours', desc: 'Urgent but not immediately life-threatening.', cls: 'border-warning-500 bg-warning-50 text-warning-900', badge: 'bg-warning-500 text-white' },
   { id: 'Within 24 Hours', label: 'Within 24 Hours', desc: 'Needed today for planned procedure.', cls: 'border-navy-500 bg-navy-50 text-navy-900', badge: 'bg-navy-600 text-white' },
 ];
 
@@ -24,9 +24,8 @@ const StepIndicator = ({ step, total }) => (
   <div className="flex items-center gap-2 justify-center">
     {Array.from({ length: total }).map((_, i) => (
       <React.Fragment key={i}>
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-          i < step ? 'bg-success-500 text-white' : i === step ? 'bg-blood-800 text-white shadow-blood' : 'bg-surface-200 text-surface-500'
-        }`}>
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${i < step ? 'bg-success-500 text-white' : i === step ? 'bg-blood-800 text-white shadow-blood' : 'bg-surface-200 text-surface-500'
+          }`}>
           {i < step ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
         </div>
         {i < total - 1 && <div className={`flex-1 h-0.5 max-w-[40px] transition-all ${i < step ? 'bg-success-500' : 'bg-surface-200'}`} />}
@@ -75,10 +74,11 @@ export const EmergencyRequestPage = () => {
     setSubmitting(true); setError('');
     try {
       const req = await submitRequest({
+        requesterId: currentUser?.id,
         patientName: form.patientName,
-        requesterName: form.requesterName,
-        requesterEmail: form.requesterEmail,
-        contactNumber: form.contactNumber,
+        requesterName: form.requesterName || currentUser?.name || currentUser?.full_name,
+        requesterEmail: form.requesterEmail || currentUser?.email,
+        contactNumber: form.contactNumber || currentUser?.phone,
         bloodGroup: form.bloodGroup,
         componentType: form.componentType,
         unitsRequired: parseInt(form.unitsRequired, 10),

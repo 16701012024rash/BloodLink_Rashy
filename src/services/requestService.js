@@ -1,80 +1,183 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { INITIAL_REQUESTS } from '../data/mockData';
 
+/**
+ * Normalizes a database row or mock object to a standard blood request format
+ * so all UI components can reliably access both camelCase and snake_case fields.
+ */
+export function normalizeBloodRequest(r) {
+  if (!r) return null;
+  const patient = r.patient_name || r.patient_identifier || r.patientName || 'Patient';
+  const hospital = r.hospital_name || r.hospitalName || 'Hospital';
+  const address = r.hospital_location || r.hospital_address || r.hospitalAddress || 'Emergency Ward';
+  const status = r.request_status || r.status || 'Pending';
+  const priority = r.urgency_level || r.priority || 'Critical (Golden Hour)';
+  const blood = r.blood_group || r.bloodGroup || 'O+';
+  const component = r.component_type || r.componentType || 'Whole Blood';
+  const units = parseInt(r.units_required ?? r.unitsRequired ?? 1, 10);
+  const unitsDone = parseInt(r.units_fulfilled ?? r.unitsFulfilled ?? 0, 10);
+  const phone = r.contact_number || r.contactNumber || r.requester?.phone || '';
+  const notes = r.additional_information || r.notes || '';
+  const reqEmail = r.requester_email || r.requester?.email || r.requesterEmail || '';
+  const reqName = r.requester_name || r.requester?.full_name || r.requesterName || '';
+
+  return {
+    ...r,
+    id: r.id,
+    patientName: patient,
+    patient_name: patient,
+    patient_identifier: patient,
+    hospitalName: hospital,
+    hospital_name: hospital,
+    hospitalAddress: address,
+    hospital_location: address,
+    hospital_address: address,
+    bloodGroup: blood,
+    blood_group: blood,
+    componentType: component,
+    component_type: component,
+    unitsRequired: units,
+    units_required: units,
+    unitsFulfilled: unitsDone,
+    units_fulfilled: unitsDone,
+    city: r.city || 'New Delhi',
+    roomNumber: r.room_number || r.roomNumber || '',
+    room_number: r.room_number || r.roomNumber || '',
+    contactNumber: phone,
+    contact_number: phone,
+    priority: priority,
+    urgency_level: priority,
+    status: status,
+    request_status: status,
+    notes: notes,
+    additional_information: notes,
+    requesterId: r.requester_id || r.requesterId,
+    requester_id: r.requester_id || r.requesterId,
+    requesterEmail: reqEmail,
+    requesterName: reqName,
+    createdAt: r.created_at ? new Date(r.created_at).toLocaleDateString() : (r.createdAt || 'Just now'),
+    created_at: r.created_at || new Date().toISOString()
+  };
+}
+
 export const requestService = {
   /**
    * Submit an emergency or standard blood request
    */
   async createRequest(requestData) {
     if (!isSupabaseConfigured) {
-      const newReq = {
+      const newReq = normalizeBloodRequest({
         id: `REQ-${Date.now().toString().slice(-4)}`,
         ...requestData,
         status: 'Pending',
         progressPercent: 25,
         createdAt: 'Just now'
-      };
+      });
       return newReq;
     }
+
+    // Ensure we have authenticated user's ID for RLS compliance
+    let requesterId = requestData.requesterId;
+    if (!requesterId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      requesterId = user?.id;
+    }
+
+    if (!requesterId) {
+      throw new Error('You must be signed in to submit an emergency blood request.');
+    }
+
+    const patientName = requestData.patientName || 'Emergency Patient';
+    const hospitalName = requestData.hospitalName || 'Hospital';
+    const hospitalAddress = requestData.hospitalAddress || 'Emergency Ward';
+    const urgency = requestData.priority || requestData.urgency_level || 'Critical (Golden Hour)';
+    const notes = requestData.notes || requestData.additional_information || '';
 
     const { data, error } = await supabase
       .from('blood_requests')
       .insert({
-        requester_id: requestData.requesterId,
-        patient_name: requestData.patientName,
+        requester_id: requesterId,
+        patient_name: patientName,
+        patient_identifier: patientName,
         blood_group: requestData.bloodGroup,
         component_type: requestData.componentType || 'Whole Blood',
         units_required: parseInt(requestData.unitsRequired || 1, 10),
-        hospital_name: requestData.hospitalName,
-        hospital_location: requestData.hospitalAddress,
+        hospital_name: hospitalName,
+        hospital_location: hospitalAddress,
+        hospital_address: hospitalAddress,
         city: requestData.city || 'New Delhi',
         room_number: requestData.roomNumber || '',
-        contact_number: requestData.contactNumber,
-        latitude: requestData.latitude || 28.6139,
-        longitude: requestData.longitude || 77.2090,
-        urgency_level: requestData.priority || 'Critical (Golden Hour)',
-        additional_information: requestData.notes || '',
-        request_status: 'Pending'
+        contact_number: requestData.contactNumber || '108',
+        latitude: Number(requestData.latitude) || 28.6139,
+        longitude: Number(requestData.longitude) || 77.2090,
+        urgency_level: urgency,
+        additional_information: notes,
+        notes: notes,
+        request_status: 'Pending',
+        status: 'Pending'
       })
-      .select()
+      .select(`
+        *,
+        requester:profiles!blood_requests_requester_id_fkey(full_name, email, phone)
+      `)
       .single();
 
-    if (error) throw error;
-    return data;
+    if (error) {
+      console.error('[BloodLink] createRequest Supabase error:', error);
+      throw error;
+    }
+
+    return normalizeBloodRequest(data);
   },
 
   /**
-   * Fetch blood requests
+   * Fetch blood requests with flexible filtering
    */
   async getRequests({ status, urgency, city } = {}) {
     if (!isSupabaseConfigured) {
-      return INITIAL_REQUESTS;
+      return INITIAL_REQUESTS.map(normalizeBloodRequest);
     }
 
-    let query = supabase
-      .from('blood_requests')
-      .select(`
-        *,
-        requester:profiles!blood_requests_requester_id_fkey(full_name, email, phone),
-        responses:donor_responses(*, donor:profiles!donor_responses_donor_id_fkey(full_name, phone))
-      `)
-      .order('created_at', { ascending: false });
+    try {
+      let query = supabase
+        .from('blood_requests')
+        .select(`
+          *,
+          requester:profiles!blood_requests_requester_id_fkey(full_name, email, phone),
+          responses:donor_responses(*, donor:profiles!donor_responses_donor_id_fkey(full_name, phone))
+        `)
+        .order('created_at', { ascending: false });
 
-    if (status && status !== 'All') {
-      query = query.eq('request_status', status);
+      if (status && status !== 'All') {
+        query = query.or(`request_status.eq.${status},status.eq.${status}`);
+      }
+
+      if (urgency && urgency !== 'All') {
+        query = query.eq('urgency_level', urgency);
+      }
+
+      if (city && city !== 'All Cities') {
+        query = query.ilike('city', `%${city}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        // Fallback to plain select without joins if schema relationships vary
+        console.warn('[BloodLink] Joined getRequests failed, falling back to simple select:', error.message);
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('blood_requests')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (fallbackError) throw fallbackError;
+        return (fallbackData || []).map(normalizeBloodRequest);
+      }
+
+      return (data || []).map(normalizeBloodRequest);
+    } catch (err) {
+      console.error('[BloodLink] Failed to load blood requests from Supabase:', err);
+      return INITIAL_REQUESTS.map(normalizeBloodRequest);
     }
-
-    if (urgency && urgency !== 'All') {
-      query = query.eq('urgency_level', urgency);
-    }
-
-    if (city && city !== 'All Cities') {
-      query = query.ilike('city', `%${city}%`);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return data;
   },
 
   /**
@@ -99,12 +202,13 @@ export const requestService = {
 
     if (error) throw error;
 
-    // If accepted, update request status to 'Donor Responded'
+    // If accepted, update request status to 'In Progress - Donor Found'
     if (status === 'Accepted') {
       await supabase
         .from('blood_requests')
         .update({
-          request_status: 'Donor Responded',
+          request_status: 'In Progress - Donor Found',
+          status: 'In Progress - Donor Found',
           updated_at: new Date().toISOString()
         })
         .eq('id', requestId);
@@ -121,13 +225,17 @@ export const requestService = {
 
     const { data, error } = await supabase
       .from('blood_requests')
-      .update({ request_status: newStatus, updated_at: new Date().toISOString() })
+      .update({
+        request_status: newStatus,
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      })
       .eq('id', requestId)
       .select()
       .single();
 
     if (error) throw error;
-    return data;
+    return normalizeBloodRequest(data);
   },
 
   /**
@@ -143,9 +251,20 @@ export const requestService = {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'blood_requests' },
-        (payload) => callback(payload)
+        (payload) => {
+          const normalizedPayload = {
+            ...payload,
+            new: payload.new ? normalizeBloodRequest(payload.new) : null,
+            old: payload.old ? normalizeBloodRequest(payload.old) : null,
+          };
+          callback(normalizedPayload);
+        }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[BloodLink Realtime] Connected to blood_requests stream');
+        }
+      });
 
     return {
       unsubscribe: () => supabase.removeChannel(channel)

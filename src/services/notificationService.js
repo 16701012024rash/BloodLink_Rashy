@@ -41,21 +41,43 @@ export const notificationService = {
       return newNotif;
     }
 
-    const { data, error } = await supabase
-      .from('notifications')
-      .insert({
-        user_id: userId,
-        title,
-        message,
-        notification_type: type,
-        is_read: false,
-        action_url: actionUrl
-      })
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .insert({
+          user_id: userId,
+          title,
+          message,
+          type: type,
+          notification_type: type,
+          is_read: false,
+          action_url: actionUrl
+        })
+        .select()
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) {
+        // Fallback in case table only has one column name
+        const { data: altData, error: altError } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: userId,
+            title,
+            message,
+            type: type,
+            is_read: false,
+            action_url: actionUrl
+          })
+          .select()
+          .single();
+        if (altError) throw altError;
+        return altData;
+      }
+      return data;
+    } catch (err) {
+      console.warn('[BloodLink] Failed to persist notification:', err.message);
+      return null;
+    }
   },
 
   /**

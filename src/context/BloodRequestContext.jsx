@@ -47,8 +47,12 @@ export const BloodRequestProvider = ({ children }) => {
             requestService.getRequests()
           ]);
           if (isMounted) {
-            if (liveDonors?.length) setDonors(liveDonors);
-            if (liveRequests?.length) setRequests(liveRequests);
+            if (Array.isArray(liveDonors) && liveDonors.length > 0) {
+              setDonors(liveDonors);
+            }
+            if (Array.isArray(liveRequests)) {
+              setRequests(liveRequests);
+            }
           }
         } catch (err) {
           console.error('[BloodLink] Failed loading live Supabase data:', err);
@@ -60,11 +64,14 @@ export const BloodRequestProvider = ({ children }) => {
 
     // Subscribe to real-time changes
     const subscription = requestService.subscribeToRequests((payload) => {
-      if (payload.eventType === 'INSERT') {
-        setRequests(prev => [payload.new, ...prev]);
-      } else if (payload.eventType === 'UPDATE') {
+      if (payload.eventType === 'INSERT' && payload.new) {
+        setRequests(prev => {
+          if (prev.some(r => r.id === payload.new.id)) return prev;
+          return [payload.new, ...prev];
+        });
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
         setRequests(prev => prev.map(r => r.id === payload.new.id ? { ...r, ...payload.new } : r));
-      } else if (payload.eventType === 'DELETE') {
+      } else if (payload.eventType === 'DELETE' && payload.old) {
         setRequests(prev => prev.filter(r => r.id !== payload.old.id));
       }
     });
@@ -89,21 +96,31 @@ export const BloodRequestProvider = ({ children }) => {
 
   // Submit emergency or regular request with algorithmic matching
   const submitRequest = async (newRequestData) => {
-    const newReqId = `REQ-2026-${Math.floor(100 + Math.random() * 900)}`;
-    
+    let createdItem = null;
+
+    // Persist to Supabase first if configured
+    if (isSupabaseConfigured) {
+      createdItem = await requestService.createRequest(newRequestData);
+    }
+
+    const newReqId = createdItem?.id || `REQ-2026-${Math.floor(100 + Math.random() * 900)}`;
+
     // Find algorithmic matches
     const matches = matchingService.findMatches({
-      request: newRequestData,
+      request: createdItem || newRequestData,
       donors,
       maxRadiusKm: newRequestData.radiusKm || 30
     });
 
     const requestItem = {
+      ...(createdItem || {}),
       id: newReqId,
       patientName: newRequestData.patientName,
       patient_name: newRequestData.patientName,
       requesterName: newRequestData.requesterName || newRequestData.patientName,
-      requesterEmail: newRequestData.requesterEmail || 'user@example.com',
+      requesterEmail: newRequestData.requesterEmail || '',
+      requesterId: newRequestData.requesterId || createdItem?.requester_id,
+      requester_id: newRequestData.requesterId || createdItem?.requester_id,
       bloodGroup: newRequestData.bloodGroup,
       blood_group: newRequestData.bloodGroup,
       componentType: newRequestData.componentType || 'Whole Blood',
@@ -135,23 +152,14 @@ export const BloodRequestProvider = ({ children }) => {
       matchedDonorsCount: matches.length
     };
 
-    setRequests(prev => [requestItem, ...prev]);
+    setRequests(prev => {
+      if (prev.some(r => r.id === requestItem.id)) return prev;
+      return [requestItem, ...prev];
+    });
 
     // Dispatch real-time emergency alerts to matched donors
     if (matches.length > 0) {
       matchingService.notifyMatchedDonors(requestItem, matches);
-    }
-
-    // Persist to Supabase if configured
-    if (isSupabaseConfigured) {
-      try {
-        const created = await requestService.createRequest(newRequestData);
-        if (created?.id) {
-          requestItem.id = created.id;
-        }
-      } catch (err) {
-        console.error('Failed to persist request to Supabase:', err);
-      }
     }
 
     return requestItem;
