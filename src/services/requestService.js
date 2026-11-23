@@ -93,41 +93,80 @@ export const requestService = {
     const urgency = requestData.priority || requestData.urgency_level || 'Critical (Golden Hour)';
     const notes = requestData.notes || requestData.additional_information || '';
 
-    const { data, error } = await supabase
+    // Standard schema payload (matches 02_unified_schema.sql)
+    const primaryPayload = {
+      requester_id: requesterId,
+      patient_identifier: patientName,
+      blood_group: requestData.bloodGroup,
+      component_type: requestData.componentType || 'Whole Blood',
+      units_required: parseInt(requestData.unitsRequired || 1, 10),
+      hospital_name: hospitalName,
+      hospital_address: hospitalAddress,
+      city: requestData.city || 'New Delhi',
+      contact_number: requestData.contactNumber || '108',
+      latitude: Number(requestData.latitude) || 28.6139,
+      longitude: Number(requestData.longitude) || 77.2090,
+      urgency_level: urgency,
+      status: 'Pending',
+      notes: notes
+    };
+
+    // Alternate schema payload (matches 01_initial_schema.sql)
+    const fallbackPayload = {
+      requester_id: requesterId,
+      patient_name: patientName,
+      blood_group: requestData.bloodGroup,
+      component_type: requestData.componentType || 'Whole Blood',
+      units_required: parseInt(requestData.unitsRequired || 1, 10),
+      hospital_name: hospitalName,
+      hospital_location: hospitalAddress,
+      city: requestData.city || 'New Delhi',
+      room_number: requestData.roomNumber || '',
+      contact_number: requestData.contactNumber || '108',
+      latitude: Number(requestData.latitude) || 28.6139,
+      longitude: Number(requestData.longitude) || 77.2090,
+      urgency_level: urgency,
+      request_status: 'Pending',
+      additional_information: notes
+    };
+
+    let result = null;
+    let insertError = null;
+
+    // 1. Try inserting with primary payload (02_unified_schema)
+    const { data: pData, error: pError } = await supabase
       .from('blood_requests')
-      .insert({
-        requester_id: requesterId,
-        patient_name: patientName,
-        patient_identifier: patientName,
-        blood_group: requestData.bloodGroup,
-        component_type: requestData.componentType || 'Whole Blood',
-        units_required: parseInt(requestData.unitsRequired || 1, 10),
-        hospital_name: hospitalName,
-        hospital_location: hospitalAddress,
-        hospital_address: hospitalAddress,
-        city: requestData.city || 'New Delhi',
-        room_number: requestData.roomNumber || '',
-        contact_number: requestData.contactNumber || '108',
-        latitude: Number(requestData.latitude) || 28.6139,
-        longitude: Number(requestData.longitude) || 77.2090,
-        urgency_level: urgency,
-        additional_information: notes,
-        notes: notes,
-        request_status: 'Pending',
-        status: 'Pending'
-      })
-      .select(`
-        *,
-        requester:profiles!blood_requests_requester_id_fkey(full_name, email, phone)
-      `)
+      .insert(primaryPayload)
+      .select('*')
       .single();
 
-    if (error) {
-      console.error('[BloodLink] createRequest Supabase error:', error);
-      throw error;
+    if (!pError && pData) {
+      result = pData;
+    } else {
+      insertError = pError;
+      console.warn('[BloodLink] Primary insert failed, trying legacy schema payload:', pError?.message);
+
+      // 2. Fallback to legacy payload (01_initial_schema)
+      const { data: fData, error: fError } = await supabase
+        .from('blood_requests')
+        .insert(fallbackPayload)
+        .select('*')
+        .single();
+
+      if (!fError && fData) {
+        result = fData;
+        insertError = null;
+      } else {
+        insertError = fError;
+      }
     }
 
-    return normalizeBloodRequest(data);
+    if (insertError || !result) {
+      console.error('[BloodLink] createRequest Supabase error:', insertError);
+      throw new Error(insertError?.message || 'Database error creating blood request');
+    }
+
+    return normalizeBloodRequest(result);
   },
 
   /**
@@ -204,14 +243,17 @@ export const requestService = {
 
     // If accepted, update request status to 'In Progress - Donor Found'
     if (status === 'Accepted') {
-      await supabase
+      const { error: updErr1 } = await supabase
         .from('blood_requests')
-        .update({
-          request_status: 'In Progress - Donor Found',
-          status: 'In Progress - Donor Found',
-          updated_at: new Date().toISOString()
-        })
+        .update({ status: 'In Progress - Donor Found', updated_at: new Date().toISOString() })
         .eq('id', requestId);
+
+      if (updErr1) {
+        await supabase
+          .from('blood_requests')
+          .update({ request_status: 'In Progress - Donor Found', updated_at: new Date().toISOString() })
+          .eq('id', requestId);
+      }
     }
 
     return data;
@@ -223,16 +265,29 @@ export const requestService = {
   async updateStatus(requestId, newStatus) {
     if (!isSupabaseConfigured) return { id: requestId, status: newStatus };
 
-    const { data, error } = await supabase
+    let data = null;
+    let error = null;
+
+    const { data: d1, error: e1 } = await supabase
       .from('blood_requests')
-      .update({
-        request_status: newStatus,
-        status: newStatus,
-        updated_at: new Date().toISOString()
-      })
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', requestId)
-      .select()
+      .select('*')
       .single();
+
+    if (!e1 && d1) {
+      data = d1;
+    } else {
+      const { data: d2, error: e2 } = await supabase
+        .from('blood_requests')
+        .update({ request_status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', requestId)
+        .select('*')
+        .single();
+
+      data = d2;
+      error = e2;
+    }
 
     if (error) throw error;
     return normalizeBloodRequest(data);

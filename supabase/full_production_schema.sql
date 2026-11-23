@@ -581,4 +581,7 @@ VALUES
   ('bb000000-0000-0000-0000-000000000001', 'AB-', 'Whole Blood', 6, 1, 'Tested & Valid for 35 days')
 ON CONFLICT (blood_bank_id, blood_group, component_type) DO NOTHING;
 
+-- 15. RELOAD POSTGREST SCHEMA CACHE
+NOTIFY pgrst, 'reload schema';
+
 SELECT 'BloodLink complete production schema, triggers, and realtime configuration successfully loaded!' AS status;
